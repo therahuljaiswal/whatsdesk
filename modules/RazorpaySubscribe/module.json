@@ -1,0 +1,15 @@
+{
+    "name": "Razorpay",
+    "isSubscriptionModule": true,
+    "alias": "razorpay-subscribe",
+    "description": "",
+    "keywords": [],
+    "active": 1,
+    "order": 0,
+    "providers": [
+        "Modules\\RazorpaySubscribe\\Providers\\Main"
+    ],
+    "aliases": {},
+    "files": [],
+    "requires": []
+}

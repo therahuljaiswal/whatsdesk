@@ -1,0 +1,9 @@
+{
+    "name": "mobidonia/embeddedlogin",
+    "description": "Facebook Embedded Signup for WhatsApp Cloud API",
+    "autoload": {
+        "psr-4": {
+            "Modules\\Embeddedlogin\\": ""
+        }
+    }
+}

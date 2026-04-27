@@ -1,0 +1,133 @@
+version: "3.8"
+services:
+  # The Main Application (PHP-FPM + Nginx combined)
+  # Nginx and PHP-FPM run together in the same container using supervisor
+  app:
+    # Option 1: Build from source (if Dockerfile is in repo root)
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args:
+        user: ${DOCKER_USER:-laravel}
+        uid: ${DOCKER_UID:-1000}
+    # Option 2: Use pre-built image (uncomment if build fails)
+    # Remove 'build:' section above and uncomment:
+    # image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE=${DB_DATABASE}
+      - APP_ENV=${APP_ENV:-production}
+      - APP_DEBUG=${APP_DEBUG:-false}
+      - FORCE_HTTPS=${FORCE_HTTPS:-true}
+    # Nginx listens on port 80 and proxies to PHP-FPM
+    expose:
+      - "80"
+    healthcheck:
+      # Check if PHP is working (PHP-FPM and Nginx are managed by supervisor)
+      test: ["CMD", "php", "-r", "exit(0);"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+  # Database (can be managed separately in Coolify or included here)
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    shm_size: 256mb
+
+  # Laravel Reverb (Websockets)
+  reverb:
+    image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    restart: unless-stopped
+    working_dir: /var/www
+    command: ["reverb"]
+    volumes:
+      - ./:/var/www
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE=${DB_DATABASE}
+      - REVERB_APP_ID=${REVERB_APP_ID}
+      - REVERB_APP_KEY=${REVERB_APP_KEY}
+      - REVERB_APP_SECRET=${REVERB_APP_SECRET}
+      - REVERB_HOST=0.0.0.0
+      - REVERB_PORT=8080
+      - REVERB_SCHEME=https
+    expose:
+      - "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+  # Queue Worker
+  queue:
+    image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    restart: unless-stopped
+    working_dir: /var/www
+    command: ["queue"]
+    volumes:
+      - ./:/var/www
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE=${DB_DATABASE}
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+volumes:
+  dbdata:
+    driver: local
+
+# ============================================
+# IMPORTANT: Single Container Setup
+# ============================================
+# 
+# PHP-FPM and Nginx run together in the same container using supervisor.
+# This simplifies deployment - only one image to build and manage!
+# 
+# Architecture:
+# - Coolify's Caddy → App Container (Nginx on port 80) → PHP-FPM (port 9000)
+# - Nginx handles HTTP requests, static files, URL rewriting
+# - PHP-FPM handles PHP execution
+# - Both services managed by supervisor in the same container
+#
+# ============================================
+# Coolify manages:
+# ============================================
+# - Network configuration (uses its own network)
+# - SSL certificates (automatic via Caddy)
+# - Reverse proxy setup (HTTP → App Container port 80)
+# - Port mapping
+# - Domain configuration
+

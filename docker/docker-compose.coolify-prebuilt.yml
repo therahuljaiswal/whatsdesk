@@ -1,0 +1,119 @@
+version: "3.8"
+services:
+  # The Main Application (PHP-FPM + Nginx combined)
+  # Using pre-built image with code baked in
+  # Code is copied into the image during build, so no volume mount needed
+  # Nginx and PHP-FPM run together in the same container using supervisor
+  app:
+    image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    restart: unless-stopped
+    working_dir: /var/www
+    # No volume mount - code is in the image
+    # volumes:
+    #   - ./:/var/www
+    environment:
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME:-laravel}
+      - DB_PASSWORD=${DB_PASSWORD:-root}
+      - DB_DATABASE=${DB_DATABASE:-laravel}
+      - APP_ENV=${APP_ENV:-production}
+      - APP_URL=${APP_URL:-http://localhost}
+      - APP_DEBUG=${APP_DEBUG:-false}
+      - FORCE_HTTPS=${FORCE_HTTPS:-true}
+    expose:
+      - "80"  # Nginx listens on port 80
+    healthcheck:
+      # Check if PHP is working (PHP-FPM and Nginx are managed by supervisor)
+      test: ["CMD", "php", "-r", "exit(0);"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s  # Increased to 3 minutes to allow migrations and caching to complete
+
+  # Database
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-laravel}
+      # IMPORTANT: Set DB_ROOT_PASSWORD in Coolify environment variables
+      # If not set, defaults to 'root' (change this in production!)
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      MYSQL_USER: ${DB_USERNAME:-laravel}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-root}
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      # Simple healthcheck - mysqladmin ping with password from environment
+      # MariaDB containers have MYSQL_ROOT_PASSWORD set, use it directly
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${MYSQL_ROOT_PASSWORD:-root} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    shm_size: 256mb
+
+  # Laravel Reverb (Websockets)
+  reverb:
+    image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    restart: unless-stopped
+    working_dir: /var/www
+    command: ["reverb"]
+    # No volume mount - code is in the image
+    # volumes:
+    #   - ./:/var/www
+    environment:
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME:-laravel}
+      - DB_PASSWORD=${DB_PASSWORD:-root}
+      - DB_DATABASE=${DB_DATABASE:-laravel}
+      - REVERB_APP_ID=${REVERB_APP_ID:-whatsdesk}
+      - REVERB_APP_KEY=${REVERB_APP_KEY:-whatsdesk-key}
+      - REVERB_APP_SECRET=${REVERB_APP_SECRET:-whatsdesk-secret}
+      - REVERB_HOST=0.0.0.0
+      - REVERB_PORT=8080
+      - REVERB_SCHEME=https
+    expose:
+      - "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+  # Queue Worker
+  queue:
+    image: ${DOCKER_IMAGE:-mobidonia/whatsdesk:latest}
+    restart: unless-stopped
+    working_dir: /var/www
+    command: ["queue"]
+    # No volume mount - code is in the image
+    # volumes:
+    #   - ./:/var/www
+    environment:
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USERNAME=${DB_USERNAME:-laravel}
+      - DB_PASSWORD=${DB_PASSWORD:-root}
+      - DB_DATABASE=${DB_DATABASE:-laravel}
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+volumes:
+  dbdata:
+    driver: local
+
+# Use this file if:
+# 1. You've already built and pushed the image to a registry WITH code included
+# 2. Coolify build is failing
+# 3. You want faster deployments (no build step)
+#
+# IMPORTANT: The Dockerfile must COPY the code into the image during build.
+# Code is baked into the image, so volume mounts are not needed for app/reverb/queue.
+# Nginx configs are also baked into the image - everything runs in one container!
+
